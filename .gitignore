@@ -1,0 +1,11 @@
+data/
+models/
+*.pdf
+*.zip
+*.png
+*.jpg
+*.npy
+cityscale/
+spacenet/
+globalscale/
+
