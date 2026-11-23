@@ -1,15 +1,18 @@
-import numpy as np
-import torch
-from torch.utils.data import Dataset
-import cv2
+import json
 import math
-import graph_utils
+import os
+import pickle
+
+import addict
+import cv2
+import numpy as np
 import rtree
 import scipy
-import pickle
-import os
-import addict
-import json
+import torch
+from torch.utils.data import Dataset
+
+import graph_utils
+
 
 def read_rgb_img(path):
     bgr = cv2.imread(path)
@@ -47,13 +50,13 @@ def globalscale_data_partition():
     #2714-3337 indomain
     for x in range(2375):
         indrange_train.append(x)
-    
+
     for x in range(2375,2714):
         indrange_validation.append(x)
 
     for x in range(2714,3338):
         indrange_test.append(x)
-    
+
     for x in range(130):
         indrange_test_out_domain.append(x)
     return indrange_train, indrange_validation, indrange_test,indrange_test_out_domain
@@ -136,7 +139,7 @@ class GraphLabelGenerator():
             interesting_indices.update(nearby_indices)
         self.sample_weights = np.full((point_num, ), 0.1, dtype=np.float32)
         self.sample_weights[list(interesting_indices)] = 0.9
-    
+
     def sample_patch(self, patch, rot_index = 0):
         (x0, y0), (x1, y1) = patch
         query_box = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
@@ -152,14 +155,14 @@ class GraphLabelGenerator():
             fake_points = np.array([[0.0, 0.0]], dtype=np.float32)
             fake_sample = ([[0, 0]] * max_nbr_queries, [False] * max_nbr_queries, [False] * max_nbr_queries)
             return fake_points, [fake_sample] * sample_num
-        patch_points = self.subdivide_points[patch_indices, :]     
+        patch_points = self.subdivide_points[patch_indices, :]
         # random scores to emulate different random configurations that all share a
         # similar spacing between sampled points
         # raise scores for intersction points so they are always kept
         nms_scores = np.random.uniform(low=0.9, high=1.0, size=patch_indices.shape[0])
         nms_score_override = self.nms_score_override[patch_indices]
         nms_scores = np.maximum(nms_scores, nms_score_override)
-        nms_radius = self.config.ROAD_NMS_RADIUS    
+        nms_radius = self.config.ROAD_NMS_RADIUS
         # kept_indces are into the patch_points array
         nmsed_points, kept_indices = graph_utils.nms_points(patch_points, nms_scores, radius=nms_radius, return_indices=True)
         # now this is into the subdivide graph
@@ -188,7 +191,7 @@ class GraphLabelGenerator():
             source_node = sample_indices[i]
             valid_nbr_indices = knn_idx[i, knn_idx[i, :] < nmsed_point_num]
             valid_nbr_indices = valid_nbr_indices[1:] # the nearest one is self so remove
-            target_nodes = [nmsed_indices[ni] for ni in valid_nbr_indices]  
+            target_nodes = [nmsed_indices[ni] for ni in valid_nbr_indices]
             ### BFS to find immediate neighbors on graph
             reached_nodes = graph_utils.bfs_with_conditions(self.full_graph_subdivide, source_node, set(target_nodes), radius // self.subdivide_resolution)
             shall_connect = [t in reached_nodes for t in target_nodes]
@@ -225,7 +228,7 @@ class GraphLabelGenerator():
         nmsed_points = nmsed_points @ trans.T @ np.linalg.matrix_power(rot.T, rot_index) @ np.linalg.inv(trans.T)
         nmsed_points = nmsed_points[:, :2]
         return nmsed_points, samples
-         
+
 def graph_collate_fn(batch):
     keys = batch[0].keys()
     collated = {}
@@ -257,7 +260,7 @@ class SatMapDataset(Dataset):
             gt_graph_pattern = '../region_{}_refine_gt_graph.p'
 
             train, val, test = cityscale_data_partition()
-        
+
             # coord-transform = (r, c) -> (x, y)
             # takes [N, 2] points
             coord_transform = lambda v : v[:, ::-1]
@@ -272,7 +275,7 @@ class SatMapDataset(Dataset):
             gt_graph_pattern = '../region_{}_refine_gt_graph.p'
 
             train, val, test, test_out = globalscale_data_partition()
-            
+
             # coord-transform = (r, c) -> (x, y)
             # takes [N, 2] points
             coord_transform = lambda v : v[:, ::-1]
@@ -284,7 +287,7 @@ class SatMapDataset(Dataset):
             keypoint_mask_pattern = '../processed/keypoint_mask_{}.png'
             road_mask_pattern = '../processed/road_mask_{}.png'
             gt_graph_pattern = '../{}__gt_graph.p'
-            
+
             train, val, test = spacenet_data_partition()
 
             # coord-transform ??? -> (x, y)
@@ -296,7 +299,7 @@ class SatMapDataset(Dataset):
         train_split = train + val
         test_split = test
         tile_indices = train_split if self.is_train else test_split
-        
+
         self.tile_indices = tile_indices
 
         self.trainnum = train
@@ -326,7 +329,7 @@ class SatMapDataset(Dataset):
             self.keypoint_masks.append(cv2.imread(keypoint_mask_path, cv2.IMREAD_GRAYSCALE))
             graph_label_generator = GraphLabelGenerator(config, gt_graph_adj, coord_transform)
             self.graph_label_generators.append(graph_label_generator)
-        
+
         self.sample_min = self.SAMPLE_MARGIN
         self.sample_max = self.IMAGE_SIZE - (self.config.PATCH_SIZE + self.SAMPLE_MARGIN)
 
@@ -342,15 +345,15 @@ class SatMapDataset(Dataset):
         if self.is_train:
             if self.config.DATASET == 'cityscale':
                 num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
-                return len(self.trainnum) * num_patches_per_image             
-            elif self.config.DATASET == 'spacenet':               
+                return len(self.trainnum) * num_patches_per_image
+            elif self.config.DATASET == 'spacenet':
                 num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
                 return len(self.trainnum) * num_patches_per_image
         else:
             return len(self.eval_patches)
 
     def __getitem__(self, idx):
-        
+
         if self.is_train:
             img_idx = np.random.randint(low=0, high=len(self.rgbs))
             begin_x = np.random.randint(low=self.sample_min, high=self.sample_max+1)
@@ -358,11 +361,11 @@ class SatMapDataset(Dataset):
             end_x, end_y = begin_x + self.config.PATCH_SIZE, begin_y + self.config.PATCH_SIZE
         else:
             # Returns eval patch
-            img_idx, (begin_x, begin_y), (end_x, end_y) = self.eval_patches[idx]  
+            img_idx, (begin_x, begin_y), (end_x, end_y) = self.eval_patches[idx]
         # Crop patch imgs and masks
         rgb_patch = self.rgbs[img_idx][begin_y:end_y, begin_x:end_x, :]
         keypoint_mask_patch = self.keypoint_masks[img_idx][begin_y:end_y, begin_x:end_x]
-        road_mask_patch = self.road_masks[img_idx][begin_y:end_y, begin_x:end_x]    
+        road_mask_patch = self.road_masks[img_idx][begin_y:end_y, begin_x:end_x]
         # Augmentation
         rot_index = 0
         if self.is_train:
@@ -370,19 +373,19 @@ class SatMapDataset(Dataset):
             # CCW
             rgb_patch = np.rot90(rgb_patch, rot_index, [0,1]).copy()
             keypoint_mask_patch = np.rot90(keypoint_mask_patch, rot_index, [0, 1]).copy()
-            road_mask_patch = np.rot90(road_mask_patch, rot_index, [0, 1]).copy()       
+            road_mask_patch = np.rot90(road_mask_patch, rot_index, [0, 1]).copy()
         # Sample graph labels from patch
         patch = ((begin_x, begin_y), (end_x, end_y))
         # points are img (x, y) inside the patch.
-        graph_points, topo_samples = self.graph_label_generators[img_idx].sample_patch(patch, rot_index)       
-        pairs, connected, valid = zip(*topo_samples)  
+        graph_points, topo_samples = self.graph_label_generators[img_idx].sample_patch(patch, rot_index)
+        pairs, connected, valid = zip(*topo_samples)
         # rgb: [H, W, 3] 0-255
         # masks: [H, W] 0-1
         return {
             'rgb': torch.tensor(rgb_patch, dtype=torch.float32),
             'keypoint_mask': torch.tensor(keypoint_mask_patch, dtype=torch.float32) / 255.0,
             'road_mask': torch.tensor(road_mask_patch, dtype=torch.float32) / 255.0,
-            
+
             'graph_points': torch.tensor(graph_points, dtype=torch.float32),
             'pairs': torch.tensor(pairs, dtype=torch.int32),
             'connected': torch.tensor(connected, dtype=torch.bool),

@@ -1,17 +1,19 @@
+import os
 from argparse import ArgumentParser
+
+import lightning.pytorch as pl
 import numpy as np
 import torch
 import torch.nn as nn
+import wandb
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
-from utils import load_config
+
 from dataset import SatMapDataset, graph_collate_fn
 from model import SAMRoadplus
-import wandb
-import lightning.pytorch as pl
-from lightning.pytorch.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
-from lightning.pytorch.callbacks import LearningRateMonitor
-import os
+from utils import load_config
+
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 parser = ArgumentParser()
@@ -39,7 +41,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     config = load_config(args.config)
     dev_run = args.dev_run or args.fast_dev_run
-    
+
     # start a new wandb run to track this script
     wandb.init(
         # set the wandb project where this run will be logged
@@ -68,7 +70,7 @@ if __name__ == "__main__":
     val_loader = DataLoader(
         val_ds,
         batch_size=config.BATCH_SIZE,
-        shuffle=False, 
+        shuffle=False,
         num_workers=config.DATA_WORKER_NUM,
         pin_memory=True,
         collate_fn=graph_collate_fn,
@@ -83,10 +85,10 @@ if __name__ == "__main__":
         callbacks=[checkpoint_callback, lr_monitor],
         logger=wandb_logger,
         fast_dev_run=args.fast_dev_run,
-        
+
         precision=args.precision,
-      
-        gradient_clip_val=1.0, 
+
+        gradient_clip_val=1.0,
         )
     # trainer.fit(net, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.resume)
     trainer.fit(net, train_dataloaders=train_loader, val_dataloaders=val_loader)
