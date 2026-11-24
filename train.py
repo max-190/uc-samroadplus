@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 from argparse import ArgumentParser
 import numpy as np
@@ -38,8 +38,10 @@ parser.add_argument(
 
 
 if __name__ == "__main__":
+    print(f"[PID {os.getpid()}] Starting train.py", flush=True)
     args = parser.parse_args()
     config = load_config(args.config)
+    print(f"[PID {os.getpid()}] Config loaded", flush=True)
     dev_run = args.dev_run or args.fast_dev_run
     
     # start a new wandb run to track this script
@@ -57,7 +59,13 @@ if __name__ == "__main__":
 
     net = SAMRoadplus(config)
 
-    train_ds, val_ds = SatMapDataset(config, split='train', dev_run=dev_run), SatMapDataset(config, split='val', dev_run=dev_run)
+    print(f"[PID {os.getpid()}] Loading training dataset", flush=True)
+    train_ds = SatMapDataset(config, split='train', dev_run=dev_run)
+    print(f"[PID {os.getpid()}] Training dataset loaded: {len(train_ds)} samples", flush=True)
+
+    print(f"[PID {os.getpid()}] Loading validation dataset", flush=True)
+    val_ds = SatMapDataset(config, split='val', dev_run=dev_run)
+    print(f"[PID {os.getpid()}] Validation dataset loaded: {len(val_ds)} samples", flush=True)
 
     train_loader = DataLoader(
         train_ds,
@@ -75,15 +83,16 @@ if __name__ == "__main__":
         pin_memory=True,
         collate_fn=graph_collate_fn,
     )
-    checkpoint_callback = ModelCheckpoint(every_n_epochs=1, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath="/local/s3425606/samroad_experiment/checkpoints", every_n_epochs=1, save_top_k=-1)
     lr_monitor = LearningRateMonitor(logging_interval='step')
     # wandb_logger = WandbLogger()   
-    logger=CSVLogger("logs", name="samroadplus")
+    logger = CSVLogger(save_dir="/data/samroad_experiment/logs", name="samroadplus")
     trainer = pl.Trainer(
         max_epochs=config.TRAIN_EPOCHS,
         accelerator="gpu",
-        devices=2, # was 2, but I changed it after the error
-        strategy="ddp", # For more than one device,
+        devices=1, # was 2, but I changed it after the error
+        # strategy="ddp", # For more than one device,
+        strategy="auto", # For one device,
         check_val_every_n_epoch=1,
         num_sanity_val_steps=2,
         callbacks=[checkpoint_callback, lr_monitor],
@@ -93,5 +102,6 @@ if __name__ == "__main__":
         precision=args.precision,
         gradient_clip_val=1.0,
     )
+    print(f"[PID {os.getpid()}] Starting trainer.fit()", flush=True)
     trainer.fit(net, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.resume if args.resume else None)
     # trainer.fit(net, train_dataloaders=train_loader, val_dataloaders=val_loader)

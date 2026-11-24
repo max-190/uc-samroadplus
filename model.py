@@ -436,7 +436,7 @@ class SAMRoadplus(pl.LightningModule):
         if self.config.NO_SAM:
             return
         with open(config.SAM_CKPT_PATH, "rb") as f:
-            ckpt_state_dict = torch.load(f)
+            ckpt_state_dict = torch.load(f, map_location="cpu", weights_only=True)
 
             ## Resize pos embeddings, if needed
             if image_size != 1024:
@@ -574,9 +574,9 @@ class SAMRoadplus(pl.LightningModule):
             viz_gt_road = road_mask[:max_viz_num, ...]
 
             
-            columns = ['rgb', 'gt_keypoint', 'gt_road', 'pred_keypoint', 'pred_road']
-            data = [[wandb.Image(x.cpu().numpy()) for x in row] for row in list(zip(viz_rgb, viz_gt_keypoint, viz_gt_road, viz_pred_road , viz_pred_keypoint))]
-            self.logger.log_table(key='viz_table', columns=columns, data=data)
+            # columns = ['rgb', 'gt_keypoint', 'gt_road', 'pred_keypoint', 'pred_road']
+            # data = [[wandb.Image(x.cpu().numpy()) for x in row] for row in list(zip(viz_rgb, viz_gt_keypoint, viz_gt_road, viz_pred_road , viz_pred_keypoint))]
+            # self.logger.log_table(key='viz_table', columns=columns, data=data)
 
         road_mask = (road_mask > 0.5).float()
         self.keypoint_iou.update(mask_scores[..., 0], keypoint_mask)
