@@ -244,7 +244,7 @@ def graph_collate_fn(batch):
     return collated
 
 class SatMapDataset(Dataset):
-    def __init__(self, config, is_train, dev_run=False):
+    def __init__(self, config, split, dev_run=False):
         self.config = config
         assert self.config.DATASET in {'cityscale','globalscale', 'spacenet'}
         if self.config.DATASET == 'cityscale':
@@ -262,20 +262,53 @@ class SatMapDataset(Dataset):
             # takes [N, 2] points
             coord_transform = lambda v : v[:, ::-1]
 
+        # elif self.config.DATASET == 'globalscale':
+        #     self.IMAGE_SIZE = 2048
+        #     # TODO: SAMPLE_MARGIN here is for training, the one in config is for inference
+        #     self.SAMPLE_MARGIN = 64
+        #     data_root = self.config.DATA_ROOT
+
+        #     rgb_pattern = os.path.join(data_root, 'region_{}_sat.png')
+        #     keypoint_mask_pattern = os.path.join(data_root, 'keypoint_mask_{}.png')
+        #     road_mask_pattern = os.path.join(data_root, 'road_mask_{}.png')
+        #     gt_graph_pattern = os.path.join(data_root, 'region_{}_refine_gt_graph.p')
+
+        #     train, val, test, test_out = globalscale_data_partition()
+            
+        #     # coord-transform = (r, c) -> (x, y)
+        #     # takes [N, 2] points
+        #     coord_transform = lambda v : v[:, ::-1]
+            
         elif self.config.DATASET == 'globalscale':
             self.IMAGE_SIZE = 2048
-            # TODO: SAMPLE_MARGIN here is for training, the one in config is for inference
             self.SAMPLE_MARGIN = 64
-            rgb_pattern = '../region_{}_sat.png'
-            keypoint_mask_pattern = '../keypoint_mask_{}.png'
-            road_mask_pattern = '../road_mask_{}.png'
-            gt_graph_pattern = '../region_{}_refine_gt_graph.p'
+            data_root = self.config.DATA_ROOT
 
-            train, val, test, test_out = globalscale_data_partition()
-            
-            # coord-transform = (r, c) -> (x, y)
-            # takes [N, 2] points
-            coord_transform = lambda v : v[:, ::-1]
+            coord_transform = lambda v: v[:, ::-1]
+
+            split_folders = {
+                'train': 'train',
+                'val': 'val',
+                'test': 'in-domain-test',
+                'test_out': 'out_of_domain'
+            }
+
+            if split not in split_folders:
+                raise ValueError(f'Unknown Global-Scale split: {split}')
+
+            split_dir = os.path.join(data_root, split_folders[split])
+
+            tile_paths = []
+            for root, dirs, files in os.walk(split_dir):
+                dirs.sort()
+                for filename in sorted(files):
+                    if filename.startswith('region_') and filename.endswith('_sat.png'):
+                        tile_idx = int(filename[len('region_'):-len('_sat.png')])
+                        tile_paths.append((tile_idx, root))
+
+            tile_paths.sort(key=lambda x: x[0])
+            tile_indices = [idx for idx, _ in tile_paths]
+            tile_dir_by_id = {idx: root for idx, root in tile_paths}
 
         elif self.config.DATASET == 'spacenet':
             self.IMAGE_SIZE = 400
@@ -291,15 +324,19 @@ class SatMapDataset(Dataset):
             # takes [N, 2] points
             coord_transform = lambda v : np.stack([v[:, 1], 400 - v[:, 0]], axis=1)
 
-        self.is_train = is_train
+        self.split = split
+        if self.config.DATASET != 'globalscale':
+            train_split = train + val
+            test_split = test
 
-        train_split = train + val
-        test_split = test
-        tile_indices = train_split if self.is_train else test_split
-        
-        self.tile_indices = tile_indices
+            if self.split == 'train':
+                tile_indices = train_split
+            elif self.split == 'val':
+                tile_indices = val
+            else:
+                tile_indices = test_split
 
-        self.trainnum = train
+        self.trainnum = tile_indices
         # Stores all imgs in memory.
         self.rgbs, self.keypoint_masks, self.road_masks  = [], [], []
         # For graph label generation.
@@ -311,39 +348,55 @@ class SatMapDataset(Dataset):
         ##### FAST DEBUG
         for tile_idx in tile_indices:
             print(f'loading tile {tile_idx}')
-            rgb_path = rgb_pattern.format(tile_idx)
-            road_mask_path = road_mask_pattern.format(tile_idx)
-            keypoint_mask_path = keypoint_mask_pattern.format(tile_idx)
+            if self.config.DATASET == 'globalscale':
+                tile_dir = tile_dir_by_id[tile_idx]
+
+                rgb_path = os.path.join(tile_dir, f'region_{tile_idx}_sat.png')
+                road_mask_path = os.path.join(tile_dir, f'road_mask_{tile_idx}.png')
+                keypoint_mask_path = os.path.join(tile_dir, f'keypoint_mask_{tile_idx}.png')
+                graph_path = os.path.join(tile_dir, f'region_{tile_idx}_refine_gt_graph.p')
+            else:
+                rgb_path = rgb_pattern.format(tile_idx)
+                road_mask_path = road_mask_pattern.format(tile_idx)
+                keypoint_mask_path = keypoint_mask_pattern.format(tile_idx)
+                graph_path = gt_graph_pattern.format(tile_idx)
             # graph label gen
             # gt graph: dict for adj list, for cityscale set keys are (r, c) nodes, values are list of (r, c) nodes
             # I don't know what coord system spacenet uses but we convert them all to (x, y)
-            gt_graph_adj = pickle.load(open(gt_graph_pattern.format(tile_idx),'rb'))
+            with open(graph_path, 'rb') as f:
+                gt_graph_adj = pickle.load(f)
             if len(gt_graph_adj) == 0:
                 print(f'===== skipped empty tile {tile_idx} =====')
                 continue
             self.rgbs.append(read_rgb_img(rgb_path))
             self.road_masks.append(cv2.imread(road_mask_path, cv2.IMREAD_GRAYSCALE))
             self.keypoint_masks.append(cv2.imread(keypoint_mask_path, cv2.IMREAD_GRAYSCALE))
-            graph_label_generator = GraphLabelGenerator(config, gt_graph_adj, coord_transform)
+            graph_label_generator = GraphLabelGenerator(self.config, gt_graph_adj, coord_transform)
             self.graph_label_generators.append(graph_label_generator)
+        
+        if self.split == 'train':
+            self.trainnum = self.rgbs
         
         self.sample_min = self.SAMPLE_MARGIN
         self.sample_max = self.IMAGE_SIZE - (self.config.PATCH_SIZE + self.SAMPLE_MARGIN)
 
-        if not self.is_train:
+        if not self.split == 'train':
             eval_patches_per_edge = math.ceil((self.IMAGE_SIZE - 2 * self.SAMPLE_MARGIN) / self.config.PATCH_SIZE)
             self.eval_patches = []
-            for i in range(len(tile_indices)):
+            for i in range(len(self.rgbs)):
                 self.eval_patches += get_patch_info_one_img(
                     i, self.IMAGE_SIZE, self.SAMPLE_MARGIN, self.config.PATCH_SIZE, eval_patches_per_edge
                 )
 
     def __len__(self):
-        if self.is_train:
+        if self.split == 'train':
             if self.config.DATASET == 'cityscale':
                 num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
                 return len(self.trainnum) * num_patches_per_image             
             elif self.config.DATASET == 'spacenet':               
+                num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
+                return len(self.trainnum) * num_patches_per_image
+            elif self.config.DATASET == 'globalscale':
                 num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
                 return len(self.trainnum) * num_patches_per_image
         else:
@@ -351,7 +404,7 @@ class SatMapDataset(Dataset):
 
     def __getitem__(self, idx):
         
-        if self.is_train:
+        if self.split == 'train':
             img_idx = np.random.randint(low=0, high=len(self.rgbs))
             begin_x = np.random.randint(low=self.sample_min, high=self.sample_max+1)
             begin_y = np.random.randint(low=self.sample_min, high=self.sample_max+1)
@@ -365,7 +418,7 @@ class SatMapDataset(Dataset):
         road_mask_patch = self.road_masks[img_idx][begin_y:end_y, begin_x:end_x]    
         # Augmentation
         rot_index = 0
-        if self.is_train:
+        if self.split == 'train':
             rot_index = np.random.randint(0, 4)
             # CCW
             rgb_patch = np.rot90(rgb_patch, rot_index, [0,1]).copy()
