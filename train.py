@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1' # Set the GPU devices to be used for training. In this case, GPUs 0 and 1 are specified.
 
 from argparse import ArgumentParser
 import numpy as np
@@ -44,6 +44,8 @@ if __name__ == "__main__":
     print(f"[PID {os.getpid()}] Config loaded", flush=True)
     dev_run = args.dev_run or args.fast_dev_run
     
+    # WandB logging is disabled because of problems signing in to the account.
+    
     # start a new wandb run to track this script
     # wandb.init(
     #     # set the wandb project where this run will be logged
@@ -60,11 +62,11 @@ if __name__ == "__main__":
     net = SAMRoadplus(config)
 
     print(f"[PID {os.getpid()}] Loading training dataset", flush=True)
-    train_ds = SatMapDataset(config, split='train', dev_run=dev_run)
+    train_ds = SatMapDataset(config, split='train', dev_run=dev_run, lazy_load=True)
     print(f"[PID {os.getpid()}] Training dataset loaded: {len(train_ds)} samples", flush=True)
 
     print(f"[PID {os.getpid()}] Loading validation dataset", flush=True)
-    val_ds = SatMapDataset(config, split='val', dev_run=dev_run)
+    val_ds = SatMapDataset(config, split='val', dev_run=dev_run, lazy_load=True)
     print(f"[PID {os.getpid()}] Validation dataset loaded: {len(val_ds)} samples", flush=True)
 
     train_loader = DataLoader(
@@ -73,6 +75,8 @@ if __name__ == "__main__":
         shuffle=True,
         num_workers=config.DATA_WORKER_NUM,
         pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
         collate_fn=graph_collate_fn,
     )
     val_loader = DataLoader(
@@ -81,6 +85,8 @@ if __name__ == "__main__":
         shuffle=False, 
         num_workers=config.DATA_WORKER_NUM,
         pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
         collate_fn=graph_collate_fn,
     )
     checkpoint_callback = ModelCheckpoint(dirpath="/local/s3425606/samroad_experiment/checkpoints", every_n_epochs=1, save_top_k=-1)

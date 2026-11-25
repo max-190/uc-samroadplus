@@ -247,8 +247,9 @@ def graph_collate_fn(batch):
     return collated
 
 class SatMapDataset(Dataset):
-    def __init__(self, config, split, dev_run=False):
+    def __init__(self, config, split, dev_run=False, lazy_load=False):
         self.config = config
+        self.lazy_load = lazy_load
         assert self.config.DATASET in {'cityscale','globalscale', 'spacenet'}
         if self.config.DATASET == 'cityscale':
             self.IMAGE_SIZE = 2048
@@ -265,23 +266,6 @@ class SatMapDataset(Dataset):
             # takes [N, 2] points
             coord_transform = lambda v : v[:, ::-1]
 
-        # elif self.config.DATASET == 'globalscale':
-        #     self.IMAGE_SIZE = 2048
-        #     # TODO: SAMPLE_MARGIN here is for training, the one in config is for inference
-        #     self.SAMPLE_MARGIN = 64
-        #     data_root = self.config.DATA_ROOT
-
-        #     rgb_pattern = os.path.join(data_root, 'region_{}_sat.png')
-        #     keypoint_mask_pattern = os.path.join(data_root, 'keypoint_mask_{}.png')
-        #     road_mask_pattern = os.path.join(data_root, 'road_mask_{}.png')
-        #     gt_graph_pattern = os.path.join(data_root, 'region_{}_refine_gt_graph.p')
-
-        #     train, val, test, test_out = globalscale_data_partition()
-            
-        #     # coord-transform = (r, c) -> (x, y)
-        #     # takes [N, 2] points
-        #     coord_transform = lambda v : v[:, ::-1]
-            
         elif self.config.DATASET == 'globalscale':
             self.IMAGE_SIZE = 2048
             self.SAMPLE_MARGIN = 64
@@ -310,6 +294,9 @@ class SatMapDataset(Dataset):
                         tile_paths.append((tile_idx, root))
 
             tile_paths.sort(key=lambda x: x[0])
+            tile_indices = [idx for idx, _ in tile_paths]
+            tile_dir_by_id = {idx: root for idx, root in tile_paths}
+                            
 
         elif self.config.DATASET == 'spacenet':
             self.IMAGE_SIZE = 400
@@ -327,7 +314,7 @@ class SatMapDataset(Dataset):
 
         self.split = split
 
-        if self.config.DATASET == 'globalscale':
+        if self.config.DATASET == 'globalscale' and lazy_load:
             if dev_run:
                 tile_paths = tile_paths[:4]
 
@@ -362,30 +349,42 @@ class SatMapDataset(Dataset):
             self.trainnum = list(range(len(self.tile_records)))
 
         else:
-            if self.split == 'train':
+            if self.config.DATASET == 'globalscale':
+                tile_indices = [idx for idx, _ in tile_paths]
+            elif self.split == 'train':
                 tile_indices = train
             elif self.split == 'val':
                 tile_indices = val
             else:
                 tile_indices = test
 
-            if dev_run:
-                tile_indices = tile_indices[:4]
-
             self.trainnum = tile_indices
 
-            self.rgbs = []
-            self.keypoint_masks = []
-            self.road_masks = []
+            # Stores all imgs in memory.
+            self.rgbs, self.keypoint_masks, self.road_masks  = [], [], []
+            # For graph label generation.
             self.graph_label_generators = []
+            
+            ##### FAST DEBUG
+            if dev_run:
+                tile_indices = tile_indices[:4]
+            ##### FAST DEBUG
 
             for tile_idx in tile_indices:
                 if tile_idx % 10 == 0:
                     print(f'loading tile {tile_idx}', flush=True)
-                rgb_path = rgb_pattern.format(tile_idx)
-                road_mask_path = road_mask_pattern.format(tile_idx)
-                keypoint_mask_path = keypoint_mask_pattern.format(tile_idx)
-                graph_path = gt_graph_pattern.format(tile_idx)
+                if self.config.DATASET == 'globalscale':
+                    tile_dir = tile_dir_by_id[tile_idx]
+
+                    rgb_path = os.path.join(tile_dir, f'region_{tile_idx}_sat.png')
+                    road_mask_path = os.path.join(tile_dir, f'road_mask_{tile_idx}.png')
+                    keypoint_mask_path = os.path.join(tile_dir, f'keypoint_mask_{tile_idx}.png')
+                    graph_path = os.path.join(tile_dir, f'region_{tile_idx}_refine_gt_graph.p')
+                else:
+                    rgb_path = rgb_pattern.format(tile_idx)
+                    road_mask_path = road_mask_pattern.format(tile_idx)
+                    keypoint_mask_path = keypoint_mask_pattern.format(tile_idx)
+                    graph_path = gt_graph_pattern.format(tile_idx)
 
                 with open(graph_path, 'rb') as f:
                     gt_graph_adj = pickle.load(f)
@@ -393,10 +392,17 @@ class SatMapDataset(Dataset):
                 if len(gt_graph_adj) == 0:
                     print(f'===== skipped empty tile {tile_idx} =====', flush=True)
                     continue
+               
+                rgb_img = read_rgb_img(rgb_path)
+                road_mask = cv2.imread(road_mask_path, cv2.IMREAD_GRAYSCALE)
+                keypoint_mask = cv2.imread(keypoint_mask_path, cv2.IMREAD_GRAYSCALE)
 
-                self.rgbs.append(read_rgb_img(rgb_path))
-                self.road_masks.append(cv2.imread(road_mask_path, cv2.IMREAD_GRAYSCALE))
-                self.keypoint_masks.append(cv2.imread(keypoint_mask_path, cv2.IMREAD_GRAYSCALE))
+                if rgb_img is None or road_mask is None or keypoint_mask is None:
+                    raise RuntimeError(f"Could not read images for tile {tile_idx}")
+
+                self.rgbs.append(rgb_img)
+                self.road_masks.append(road_mask)
+                self.keypoint_masks.append(keypoint_mask)
 
                 graph_label_generator = GraphLabelGenerator(self.config, gt_graph_adj, coord_transform)
                 self.graph_label_generators.append(graph_label_generator)
@@ -408,7 +414,7 @@ class SatMapDataset(Dataset):
         self.sample_max = self.IMAGE_SIZE - (self.config.PATCH_SIZE + self.SAMPLE_MARGIN)
 
         if self.split != 'train':
-            if self.config.DATASET == 'globalscale':
+            if self.config.DATASET == 'globalscale' and lazy_load:
                 num_images = len(self.tile_records)
             else:
                 num_images = len(self.rgbs)
@@ -436,7 +442,7 @@ class SatMapDataset(Dataset):
     def __getitem__(self, idx):
         
         if self.split == 'train':
-            if self.config.DATASET == 'globalscale':
+            if self.config.DATASET == 'globalscale' and self.lazy_load:
                 img_idx = np.random.randint(low=0, high=len(self.tile_records))
             else:
                 img_idx = np.random.randint(low=0, high=len(self.rgbs))
@@ -447,7 +453,7 @@ class SatMapDataset(Dataset):
             # Returns eval patch
             img_idx, (begin_x, begin_y), (end_x, end_y) = self.eval_patches[idx]  
         # Crop patch imgs and masks
-        if self.config.DATASET == 'globalscale':
+        if self.config.DATASET == 'globalscale' and self.lazy_load:
             rgb_img, keypoint_mask_img, road_mask_img = (self._get_tile_images(img_idx))
             graph_label_generator = self._get_graph_generator(img_idx)
 
