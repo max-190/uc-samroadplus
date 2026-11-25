@@ -1,7 +1,9 @@
-import numpy as np
 import math
+import pickle
 import sys
-import pickle 
+
+import numpy as np
+
 
 def Coord2Pixels(lat, lon, min_lat, min_lon, max_lat, max_lon, sizex, sizey):
     #print(max_lat, min_lat, sizex)
@@ -20,14 +22,14 @@ def distance(p1, p2):
 
 class RoadGraph:
     def __init__(self, filename=None, region = None):
-        self.nodeHash = {} # [tree_idx*10000000 + local_id] ->  id 
-        self.nodeHashReverse = {} 
+        self.nodeHash = {} # [tree_idx*10000000 + local_id] ->  id
+        self.nodeHashReverse = {}
         self.nodes = {}	# id -> [lat,lon]
         self.edges = {} # id -> [n1, n2]
         self.nodeLink = {}   # id -> list of next node
-        self.nodeID = 0 
+        self.nodeID = 0
         self.edgeID = 0
-        self.edgeHash = {} # [nid1 * 10000000 + nid2] -> edge id 
+        self.edgeHash = {} # [nid1 * 10000000 + nid2] -> edge id
         self.edgeScore = {}
         self.nodeTerminate = {}
         self.nodeScore = {}
@@ -62,7 +64,7 @@ class RoadGraph:
                         thislat = forest[n['similarWith'][0]][n['similarWith'][1]]['lat']
                         thislon = forest[n['similarWith'][0]][n['similarWith'][1]]['lon']
 
-                        
+
 
                     if n['OutRegion'] == 1:
                         self.nodeTerminate[tid*10000000+n['parent']] = 1
@@ -82,12 +84,12 @@ class RoadGraph:
 
                 tid += 1
 
-        
+
 
 
 
     def addEdge(self, nid1,lat1,lon1,nid2,lat2,lon2, reverse=False, nodeScore1 = 0, nodeScore2 = 0, edgeScore = 0):  #n1d1->n1d2
-        
+
 
         if nid1 not in self.nodeHash.keys():
             self.nodeHash[nid1] = self.nodeID
@@ -113,7 +115,7 @@ class RoadGraph:
         if localid1 * 10000000 + localid2 in self.edgeHash.keys():
             print("Duplicated Edge !!!", nid1, nid2)
 
-            return 
+            return
 
         self.edges[self.edgeID] = [localid1, localid2]
         self.edgeHash[localid1 * 10000000 + localid2] = self.edgeID
@@ -132,7 +134,7 @@ class RoadGraph:
 
 
     def addEdgeToOneExistedNode(self, nid1,lat1,lon1,nid2, reverse=False, nodeScore1 = 0, edgeScore = 0):  #n1d1->n1d2
-        
+
 
         if nid1 not in self.nodeHash.keys():
             self.nodeHash[nid1] = self.nodeID
@@ -216,14 +218,14 @@ class RoadGraph:
             if dist > r :
                 return
 
-                  
+
 
             lat1 = self.nodes[node_cur][0]
             lon1 = self.nodes[node_cur][1]
 
             localNodeList[node_cur] = 1
             localNodeDistance[node_cur] = dist
-            
+
             #mables.append((lat1, lon1))
 
             if node_cur not in self.nodeLinkReverse.keys():
@@ -240,7 +242,7 @@ class RoadGraph:
 
                 if node_cur * 10000000 + next_node in self.edgeHash.keys():
                     edgeS = self.edgeScore[self.edgeHash[node_cur * 10000000 + next_node]]
-                
+
                 if next_node * 10000000 + node_cur in self.edgeHash.keys():
                     edgeS = max(edgeS, self.edgeScore[self.edgeHash[next_node * 10000000 + node_cur]])
 
@@ -284,9 +286,9 @@ class RoadGraph:
                 else:
 
                     while cur < l:
-                        alpha = cur / l 
+                        alpha = cur / l
                 #for a in range(1,num):
-                #	alpha = float(a)/num 
+                #	alpha = float(a)/num
                         if dist + l * alpha > r :
                             break
 
@@ -319,7 +321,7 @@ class RoadGraph:
         localEdges = {}
 
 
-        edge_covered = {}  # (s,e) --> distance from s and distance from e 
+        edge_covered = {}  # (s,e) --> distance from s and distance from e
 
 
         if loc1[0] == loc2[0] and loc1[1] == loc2[1] :
@@ -355,7 +357,7 @@ class RoadGraph:
 
             localNodeList[node_cur] = 1
             localNodeDistance[node_cur] = dist
-            
+
             #mables.append((lat1, lon1))
 
             if node_cur not in self.nodeLinkReverse.keys():
@@ -376,7 +378,7 @@ class RoadGraph:
                     continue
 
                 if next_node in visited_next_node:
-                    continue 
+                    continue
 
                 visited_next_node.append(next_node)
 
@@ -384,7 +386,7 @@ class RoadGraph:
 
                 edgeS = 0
 
-                
+
 
                 lat0 = 0
                 lon0 = 0
@@ -404,7 +406,7 @@ class RoadGraph:
                 if node_cur == loc2[0] and next_node == loc2[1]:
                     new_ans = dist + loc2[2]
                     if new_ans < ans_dist :
-                        ans_dist = new_ans 
+                        ans_dist = new_ans
                 elif node_cur == loc2[1] and next_node == loc2[0]:
                     new_ans = dist + loc2[3]
                     if new_ans < ans_dist :
@@ -415,11 +417,11 @@ class RoadGraph:
 
                 l = distance((lat2,lon2), (lat1,lon1))
                 Queue.append((next_node, node_cur, dist + l))
-                
-                
 
 
-        
+
+
+
 
 
         return ans_dist
@@ -436,7 +438,7 @@ class RoadGraph:
         localEdges = {}
 
 
-        edge_covered = {}  # (s,e) --> distance from s and distance from e 
+        edge_covered = {}  # (s,e) --> distance from s and distance from e
 
 
         #localNodeList[nodeid] = 1
@@ -449,7 +451,7 @@ class RoadGraph:
             Queue = [(nid1, -1, dist1), (nid2, -1, dist2)]
 
 
-        # Add holes between nid1 and nid2 
+        # Add holes between nid1 and nid2
 
 
         lat1 = self.nodes[nid1][0]
@@ -461,7 +463,7 @@ class RoadGraph:
         l = distance((lat2,lon2), (lat1,lon1))
         num = int(math.ceil(l / step))
 
-        alpha = 0 
+        alpha = 0
 
         while True:
             latI = lat1*alpha + lat2*(1-alpha)
@@ -504,14 +506,14 @@ class RoadGraph:
             if dist > r :
                 continue
 
-                  
+
 
             lat1 = self.nodes[node_cur][0]
             lon1 = self.nodes[node_cur][1]
 
             localNodeList[node_cur] = 1
             localNodeDistance[node_cur] = dist
-            
+
             #mables.append((lat1, lon1))
 
             if node_cur not in self.nodeLinkReverse.keys():
@@ -534,7 +536,7 @@ class RoadGraph:
                     continue
 
                 if next_node in visited_next_node:
-                    continue 
+                    continue
 
 
 
@@ -547,7 +549,7 @@ class RoadGraph:
 
                 # if node_cur * 10000000 + next_node in self.edgeHash.keys():
                 # 	edgeS = self.edgeScore[self.edgeHash[node_cur * 10000000 + next_node]]
-                
+
                 # if next_node * 10000000 + node_cur in self.edgeHash.keys():
                 # 	edgeS = max(edgeS, self.edgeScore[self.edgeHash[next_node * 10000000 + node_cur]])
 
@@ -592,7 +594,7 @@ class RoadGraph:
                 else:
 
                     start_limitation = 0
-                    end_limitation = l 
+                    end_limitation = l
                     if (node_cur, next_node) in edge_covered.keys():
                         start_limitation = edge_covered[(node_cur, next_node)]
 
@@ -614,19 +616,19 @@ class RoadGraph:
 
                         if metaData.edgeProperty[metaData.edge2edgeid[(nnn1,nnn2)]]['layer'] < 0:
                             turnnel_edge  = True
-                            
+
 
 
 
                     while cur < l:
-                        alpha = cur / l 
-            
+                        alpha = cur / l
+
                         if dist + l * alpha > r :
                             break
 
                         if l * alpha < start_limitation:
                             cur += step
-                            continue 
+                            continue
 
                         if l * alpha > end_limitation:
                             break
@@ -635,7 +637,7 @@ class RoadGraph:
                         lonI = lon2 * alpha + lon1 * (1-alpha)
 
 
-                        
+
                         if (latI, lonI, lat2 - lat1, lon2 - lon1) not in mables and turnnel_edge is False:
                             mables.append((latI, lonI, lat2 - lat1, lon2 - lon1)) # add direction
 
@@ -727,7 +729,7 @@ class RoadGraph:
                 self.removeNode(nodeid)
                 deleted += 1
 
-        return deleted 
+        return deleted
 
     def NumOfNeighbors(self, nodeid):
         neighbor = {}
@@ -758,7 +760,7 @@ def edgeIntersection(baseX, baseY, dX, dY, n1X, n1Y, n2X, n2Y):
 
     alpha = c / t
 
-    if alpha < 0 : 
+    if alpha < 0 :
         return 0,0,0,0
 
     iX = baseX + alpha * dX

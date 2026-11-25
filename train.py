@@ -2,11 +2,16 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 from argparse import ArgumentParser
+
+import lightning.pytorch as pl
 import numpy as np
 import torch
 import torch.nn as nn
+import wandb
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
-from utils import load_config
+
 from dataset import SatMapDataset, graph_collate_fn
 from model import SAMRoadplus
 # import wandb
@@ -43,7 +48,7 @@ if __name__ == "__main__":
     config = load_config(args.config)
     print(f"[PID {os.getpid()}] Config loaded", flush=True)
     dev_run = args.dev_run or args.fast_dev_run
-    
+
     # start a new wandb run to track this script
     # wandb.init(
     #     # set the wandb project where this run will be logged
@@ -78,7 +83,7 @@ if __name__ == "__main__":
     val_loader = DataLoader(
         val_ds,
         batch_size=config.BATCH_SIZE,
-        shuffle=False, 
+        shuffle=False,
         num_workers=config.DATA_WORKER_NUM,
         pin_memory=True,
         collate_fn=graph_collate_fn,
