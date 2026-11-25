@@ -1,14 +1,15 @@
-import numpy as np
-import torch
-from torch.utils.data import Dataset
-import cv2
 import math
-import tcod
-from sklearn.neighbors import KDTree
-from skimage.draw import line
-import networkx as nx
-from graph_utils import nms_points
 
+import cv2
+import networkx as nx
+import numpy as np
+import tcod
+import torch
+from skimage.draw import line
+from sklearn.neighbors import KDTree
+from torch.utils.data import Dataset
+
+from graph_utils import nms_points
 
 IMAGE_SIZE = 2048
 SAMPLE_MARGIN = 64
@@ -40,7 +41,7 @@ def draw_points_on_image(image, points, radius):
     Returns:
     - A square image with the given points drawn as filled circles.
     """
-    
+
     # Iterate through the list of points
     for point in points:
         cv2.circle(image, point, radius, (0, 255, 0), -1)
@@ -60,7 +61,7 @@ def draw_points_on_grayscale_image(image, points, radius):
     Returns:
     - A square image with the given points drawn as filled circles.
     """
-    
+
     # Iterate through the list of points
     for point in points:
         cv2.circle(image, point, radius, 255, -1)
@@ -76,7 +77,7 @@ def is_connected_bresenham(cost, start, end):
     kp_block_radius = 4
     cv2.circle(cost, start, kp_block_radius, 0, -1)
     cv2.circle(cost, end, kp_block_radius, 0, -1)
-    
+
     # mean_cost = np.mean(cost[rr, cc])
     max_cost = np.max(cost[rr, cc])
 
@@ -94,7 +95,7 @@ def is_connected_astar(pathfinder, cost, start, end, max_path_len):
     kp_block_radius = 6
     cv2.circle(cost, start, kp_block_radius, 1, -1)
     cv2.circle(cost, end, kp_block_radius, 1, -1)
-    
+
     path = pathfinder.get_path(r0, c0, r1, c1)
     connected = (len(path) != 0) and (len(path) < max_path_len)
 
@@ -166,7 +167,7 @@ def extract_graph_astar(keypoint_mask, road_mask, config):
             checked.add((start, end))
     return graph
 
-# takes xys    
+# takes xys
 def visualize_image_and_graph(img, graph):
     # Draw nodes as green squares
     for node in graph.nodes():
@@ -184,7 +185,7 @@ def visualize_image_and_graph(img, graph):
             1,
         )
     return img
-    
+
 
 if __name__ == '__main__':
 

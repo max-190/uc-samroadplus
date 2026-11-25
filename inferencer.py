@@ -1,25 +1,29 @@
-import numpy as np
 import os
-import imageio
-import torch
-import cv2
+import pickle
 import re
-from utils import load_config, create_output_dir_and_save_config
-from dataset import  read_rgb_img, get_patch_info_one_img
-from dataset import spacenet_data_partition,cityscale_data_partition,globalscale_data_partition
-from modelinfer import SAMRoadplus
+import time
+from argparse import ArgumentParser
+from collections import defaultdict
+
+import cv2
+import imageio
+import numpy as np
+import rtree
+import scipy
+import torch
+
 import graph_extraction
 import graph_utils
 import triage
-import pickle
-import scipy
-import rtree
-from collections import defaultdict
-import time
-import os
-from argparse import ArgumentParser
-
-
+from dataset import (
+    cityscale_data_partition,
+    get_patch_info_one_img,
+    globalscale_data_partition,
+    read_rgb_img,
+    spacenet_data_partition,
+)
+from modelinfer import SAMRoadplus
+from utils import create_output_dir_and_save_config, load_config
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -85,9 +89,9 @@ def infer_one_img(net, img, config):
             # [B, H, W, 2]
             mask_scores, patch_img_features = net.infer_masks_and_img_features(batch_img_patches)
             img_features.append(patch_img_features)
-            
+
             mask_scores11 = mask_scores.permute(0, 3, 1, 2)#(0,3,1,2)
-            
+
             img_mask.append(mask_scores11)
         # Aggregate masks
         for patch_index, patch_info in enumerate(batch_patch_info):
@@ -178,7 +182,7 @@ def infer_one_img(net, img, config):
         batch_valid = torch.tensor(collated['valid'], device=args.device)
         with torch.no_grad():
             # [B, N_samples, N_pairs, 1]
-            topo_scores = net.infer_toponet(batch_features, batch_points, batch_pairs, batch_valid,batch_mask) 
+            topo_scores = net.infer_toponet(batch_features, batch_points, batch_pairs, batch_valid,batch_mask)
         # all-invalid (padded, no neighbors) queries returns nan scores
         # [B, N_samples, N_pairs]
         topo_scores = torch.where(torch.isnan(topo_scores), -100.0, topo_scores).squeeze(-1).cpu().numpy()
@@ -199,7 +203,7 @@ def infer_one_img(net, img, config):
     # avg edge scores and filter
     pred_edges = []
     for edge, score_sum in edge_scores.items():
-        score = score_sum / edge_counts[edge] 
+        score = score_sum / edge_counts[edge]
         if score > config.TOPO_THRESHOLD:
             pred_edges.append(edge)
     pred_edges = np.array(pred_edges).reshape(-1, 2)
@@ -209,7 +213,7 @@ def infer_one_img(net, img, config):
 
 if __name__ == "__main__":
     config = load_config(args.config)
-    # Builds eval model    
+    # Builds eval model
     device = torch.device("cuda") if args.device == "cuda" else torch.device("cpu")
     # Good when model architecture/input shape are fixed.
     torch.backends.cudnn.benchmark = True
@@ -228,7 +232,7 @@ if __name__ == "__main__":
         rgb_pattern = '../region_{}_sat.png'
 
     elif config.DATASET == 'globalscale_outdomain':
-        _, _, _,test_img_indices = globalscale_data_partition()   
+        _, _, _,test_img_indices = globalscale_data_partition()
         rgb_pattern = '../region_{}_sat.png'
 
     elif config.DATASET == 'globalscale':
@@ -238,13 +242,13 @@ if __name__ == "__main__":
     elif config.DATASET == 'spacenet':
         _, _, test_img_indices = spacenet_data_partition()
         rgb_pattern = '../{}__rgb.png'
-   
+
     output_dir_prefix = './save/infer_'
     if args.output_dir:
         output_dir = create_output_dir_and_save_config(output_dir_prefix, config, specified_dir=f'./save/{args.output_dir}')
     else:
         output_dir = create_output_dir_and_save_config(output_dir_prefix, config)
-    
+
     total_inference_seconds = 0.0
 
     for img_id in test_img_indices:
@@ -285,9 +289,9 @@ if __name__ == "__main__":
         graph_save_path = os.path.join(graph_save_dir, f'{img_id}.p')
         with open(graph_save_path, 'wb') as file:
             pickle.dump(large_map_sat2graph_format, file)
-        
+
         print(f'Done for {img_id}.')
-    
+
     # log inference time
     time_txt = f'Inference completed for {args.config} in {total_inference_seconds} seconds.'
     print(time_txt)

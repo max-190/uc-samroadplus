@@ -1,18 +1,17 @@
-import numpy as np
-from scipy import interpolate
-from shapely.geometry import LineString
-import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
-import networkx as nx
-from sklearn.cluster import DBSCAN
-from shapely.geometry import Point, LineString
-from shapely.strtree import STRtree
-from collections import deque
 import unittest
+from collections import deque
 
 import igraph as ig
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 import rtree
 import scipy
+from matplotlib.colors import ListedColormap
+from scipy import interpolate
+from shapely.geometry import LineString, Point
+from shapely.strtree import STRtree
+from sklearn.cluster import DBSCAN
 
 
 def inspect_graph(node_array, edge_array):
@@ -64,7 +63,7 @@ def edge_list_to_adj_table(edges):
     # edges: [[src_idx, dst_idx], ...] node indices must start from 0 and
     # be continuous.
     # Returns:
-    # adj_table: list of sets. len(adj_table) = num_nodes, adj_table[i] 
+    # adj_table: list of sets. len(adj_table) = num_nodes, adj_table[i]
     # = neighbor node indices of node i. Empty if no neighbors.
     nodes = set()
     for edge in edges:
@@ -83,7 +82,7 @@ def edge_list_to_adj_table(nodes, edges):
     # edges: [[src_idx, dst_idx], ...] node indices must start from 0 and
     # be continuous.
     # Returns:
-    # adj_table: list of sets. len(adj_table) = num_nodes, adj_table[i] 
+    # adj_table: list of sets. len(adj_table) = num_nodes, adj_table[i]
     # = neighbor node indices of node i. Empty if no neighbors.
     node_num = len(nodes)
     adj_table = [set() for i in range(node_num)]
@@ -91,7 +90,7 @@ def edge_list_to_adj_table(nodes, edges):
         start_idx, end_idx = edge[0], edge[1]
         adj_table[start_idx].add(end_idx)
     return adj_table
-    
+
 
 def trace_segment(start_edge, adj_table):
     segment_nodes = [start_edge[0], start_edge[1]]
@@ -163,15 +162,15 @@ def normalize_segments(coords, segments):
         segment = segments[i]
         first = coords[segment[0], :]
         last = coords[segment[-1], :]
-        
+
         if first[0] > last[0] or (
             first[0] == last[0] and first[1] > last[1]):
             segment = segment[::-1]
-            
+
         normalized_segments.append(segment)
-        
+
     return normalized_segments
-    
+
 
 def get_resampled_polylines(coords, segments, num_points):
     # Uniformly resamples each polyline defined by segments to num_points.
@@ -179,21 +178,21 @@ def get_resampled_polylines(coords, segments, num_points):
     # segments: [list_of_segment_node_indices, ...]
     # Returns:
     # list of [num_points, 2].
-    
+
     resampled_polylines = []
-    
+
     for segment in segments:
         polyline_coords = coords[segment]
         polyline = LineString(polyline_coords)
-        
+
         # Uniform parameter values
         dists = np.linspace(0, polyline.length, num_points)
-        
+
         # Resample polyline
         resampled_polyline = np.array([list(polyline.interpolate(d).coords)[0] for d in dists])
-        
+
         resampled_polylines.append(resampled_polyline)
-    
+
     return resampled_polylines
 
 
@@ -245,11 +244,11 @@ def visualize_polylines(image, polylines):
 
     # Display the image
     plt.imshow(image)
-    
+
     # Draw each polyline with a different color
     for idx, polyline in enumerate(polylines):
         plt.plot(polyline[:, 1], polyline[:, 0], color=cmap(idx), linewidth=2)
-    
+
     plt.show()
 
 
@@ -267,7 +266,7 @@ def visualize_polyline_graph(
         plt.plot(end_a[1], end_a[0], marker='o', markersize=8, color='blue')
         plt.plot(end_b[1], end_b[0], marker='o', markersize=8, color='blue')
         plt.show()
-    
+
 
 ## Utils for aggregating the large map.
 def remove_isolate_nodes(nodes, edges):
@@ -275,7 +274,7 @@ def remove_isolate_nodes(nodes, edges):
     graph = nx.Graph()
     graph.add_nodes_from(node_indices)
     graph.add_edges_from(edges)
-    
+
     isolated_nodes = list(nx.isolates(graph))
     graph.remove_nodes_from(isolated_nodes)
 
@@ -347,13 +346,13 @@ def split_edges(nodes, edges, distance_threshold):
             e1, e2 = (start, nearest_point_index), (nearest_point_index, end)
             edge_queue.appendleft(e1)
             edge_queue.appendleft(e2)
-    
+
     # TODO(congrui): share the edge dedup logic
     unique_edges = set()
     for (start, end) in new_edges:
         new_edge = (min(start, end), max(start, end))
         unique_edges.add(new_edge)
-    
+
     return nodes, list(unique_edges)
 
 
@@ -392,9 +391,9 @@ def convert_to_sat2graph_format(nodes, edges):
     all_edges = np.concatenate((edges, reverse_edges), axis=0)
 
     adj_table = edge_list_to_adj_table(nodes, all_edges)
-    
+
     int_nodes = [(round(x), round(y)) for x, y in nodes]
-    
+
     result = dict()
     for node_idx, neighbor_indices in enumerate(adj_table):
         # Notice, we expect the input graph has gone through node-merging so
@@ -420,13 +419,13 @@ def convert_from_sat2graph_format(graph):
         for neighbor in neighbors:
             if neighbor not in node_to_idx.keys():
                 node_to_idx[neighbor] = len(node_to_idx)
-    
+
     edges = list()
     for node, neighbors in graph.items():
         for neighbor in neighbors:
             src_idx, dst_idx = node_to_idx[node], node_to_idx[neighbor]
             edges.append((src_idx, dst_idx))
-    
+
     num_nodes = len(node_to_idx)
     nodes = [None] * num_nodes
     for node, idx in node_to_idx.items():
@@ -449,7 +448,7 @@ def convert_from_nx(graph):
         nodes.append((y, x))  # to rc
     for node_0, node_1 in graph.edges():
         edges.append((node_to_idx[node_0], node_to_idx[node_1]))
-    
+
     return np.array(nodes), np.array(edges)
 
 
@@ -549,7 +548,7 @@ def subdivide_graph(graph, resolution):
     new_edges = []
     for edge in graph.es:
         p0, p1 = graph.vs['point'][edge.source], graph.vs['point'][edge.target]
-        length = np.linalg.norm(p1 - p0) 
+        length = np.linalg.norm(p1 - p0)
         sample_pieces = max(1, int(length / resolution))
         # [N, ]
         samples = np.linspace(0.0, 1.0, sample_pieces + 1, endpoint=True)
@@ -568,7 +567,7 @@ def subdivide_graph(graph, resolution):
     new_graph = ig.Graph(len(new_points), new_edges)
     new_graph.vs['point'] = np.array(new_points)
     return new_graph
-        
+
 def nms_points(points, scores, radius, return_indices=False):
     # if score > 1.0, the point is forced to be kept regardless
     sorted_indices = np.argsort(scores)[::-1]
@@ -590,43 +589,43 @@ def nms_points(points, scores, radius, return_indices=False):
     else:
         return sorted_points[kept]
 
-    
+
 def bfs_with_conditions(graph, start_node, stop_nodes, max_depth):
     """
     Perform BFS on an igraph graph (directed or undirected) from a given start node.
     The search stops if it visits a node from a given set of stop nodes or if the depth reaches a threshold.
     The function returns the set of visited nodes, including stop nodes if encountered.
-    
+
     Args:
     - graph (ig.Graph): The graph to search.
     - start_node (int): The index of the node to start the BFS from.
     - stop_nodes (set): A set of node indices where the search will stop if visited.
     - max_depth (int): The maximum depth to search.
-    
+
     Returns:
     - set: The set of visited node indices.
     """
     visited = set()  # To keep track of visited nodes
     queue = deque()
     queue.append((start_node, 0))  # Queue of (node, depth)
-    
+
     while queue:
         current_node, current_depth = queue.popleft()  # Dequeue the next node and its depth
-        
+
         # Mark node as visited
         visited.add(current_node)
-        
+
         # Check if the current node is a stop node or if the current depth exceeds max_depth
         if current_node in stop_nodes or current_depth >= max_depth:
             # Stop condition met, do not extend
-            continue  
-        
+            continue
+
         # Get neighbors and enqueue them with incremented depth, considering all edges
         neighbors = graph.neighbors(current_node, mode="all")
         for neighbor in neighbors:
             if neighbor not in visited:
                 queue.append((neighbor, current_depth + 1))
-    
+
     return visited
 
 

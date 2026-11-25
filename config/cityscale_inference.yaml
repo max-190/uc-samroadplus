@@ -1,0 +1,36 @@
+# NOTE: This config was given as a reply to a GitHub issue. The configuration
+#       for Global-Scale has up until now not been made public.
+#       This config seems to align with arguments made by the author and others
+#       to yield results close to that of the paper.
+
+BASE_LR: 0.001
+BATCH_SIZE: 16
+DATASET: 'cityscale'
+DATA_WORKER_NUM: 1
+ENCODER_LORA: false
+ENCODER_LR_FACTOR: 0.1
+FOCAL_LOSS: false
+FREEZE_ENCODER: false
+INFER_BATCH_SIZE: 64
+INFER_PATCHES_PER_EDGE: 16
+ITSC_NMS_RADIUS: 8
+ITSC_THRESHOLD: 0.242
+MAX_NEIGHBOR_QUERIES: 16
+NEIGHBOR_RADIUS: 64
+NO_SAM: false
+PATCH_SIZE: 512
+ROAD_NMS_RADIUS: 16
+ROAD_THRESHOLD: 0.404
+SAMPLE_MARGIN: 35
+SAM_CKPT_PATH: '../sam_ckpts/sam_vit_b_01ec64.pth'
+SAM_VERSION: 'vit_b'
+TOPONET_VERSION: 'normal'
+TOPO_SAMPLE_NUM: 512
+TOPO_THRESHOLD: 0.443
+TRAIN_EPOCHS: 170
+USE_SAM_DECODER: false
+
+# Our parameters
+EXTENDED_LINE_SAMPLING_STRATEGY: 'uniform'
+SAMPLE_POINTS_INSIDE: 20 # = m
+SAMPLE_POINTS_OUTSIDE: 15 # *2, on either side, = n

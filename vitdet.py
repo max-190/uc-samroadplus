@@ -1,16 +1,13 @@
 import sys
 sys.path.insert(0, './detectron2')
 
+import pprint
 from functools import partial
 
-import torch.nn as nn
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-
-
 from detectron2.modeling import ViT
-import pprint
-
 
 
 class VITBEncoder(nn.Module):
@@ -79,7 +76,7 @@ class VITBEncoder(nn.Module):
 
     def forward(self, x):
         x = self.vitb(x)['last_feat']
-        x = self.output_feature_proj(x) 
+        x = self.output_feature_proj(x)
         return x
 
 

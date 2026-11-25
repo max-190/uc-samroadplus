@@ -1,20 +1,19 @@
+import os
 from argparse import ArgumentParser
+
+import lightning.pytorch as pl
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from utils import load_config
 import wandb
-import lightning.pytorch as pl
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-from lightning.pytorch.callbacks import LearningRateMonitor
+from torch.utils.data import DataLoader
 
 from dataset import SatMapDataset, graph_collate_fn
 from model import SAMRoadplus
-import os
-import matplotlib.pyplot as plt
-import torch
+from utils import load_config
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
@@ -39,7 +38,7 @@ if __name__ == "__main__":
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
-    
+
     net = SAMRoadplus(config)
 
     val_ds = SatMapDataset(config, is_train=False, dev_run=False)

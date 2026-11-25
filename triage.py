@@ -1,6 +1,7 @@
 import os
 import pickle
 import random
+
 import cv2
 import numpy as np
 
@@ -26,7 +27,7 @@ def visualize_image_and_graph(img, nodes, edges, viz_img_size=512):
             (15, 160, 253),
             4,
         )
-    
+
     # Draw nodes
     for node in nodes:
         x, y = node * viz_img_size
