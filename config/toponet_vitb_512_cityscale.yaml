@@ -1,5 +1,5 @@
 # NOTE: The authors of SAM-Road++ never made the config files for global-scale
-#       public, however they do mention this configurations
+#       public, however they do mention this configuration
 
 DATASET: 'cityscale'
 

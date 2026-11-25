@@ -12,10 +12,18 @@ import torch
 from torch.utils.data import Dataset
 
 import graph_utils
-
+import rtree
+import scipy
+import pickle
+import os
+import addict
+import json
+from collections import OrderedDict
 
 def read_rgb_img(path):
     bgr = cv2.imread(path)
+    if bgr is None:
+        return None
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return rgb
 
@@ -247,7 +255,7 @@ def graph_collate_fn(batch):
     return collated
 
 class SatMapDataset(Dataset):
-    def __init__(self, config, is_train, dev_run=False):
+    def __init__(self, config, split, dev_run=False):
         self.config = config
         assert self.config.DATASET in {'cityscale','globalscale', 'spacenet'}
         if self.config.DATASET == 'cityscale':
@@ -265,20 +273,51 @@ class SatMapDataset(Dataset):
             # takes [N, 2] points
             coord_transform = lambda v : v[:, ::-1]
 
+        # elif self.config.DATASET == 'globalscale':
+        #     self.IMAGE_SIZE = 2048
+        #     # TODO: SAMPLE_MARGIN here is for training, the one in config is for inference
+        #     self.SAMPLE_MARGIN = 64
+        #     data_root = self.config.DATA_ROOT
+
+        #     rgb_pattern = os.path.join(data_root, 'region_{}_sat.png')
+        #     keypoint_mask_pattern = os.path.join(data_root, 'keypoint_mask_{}.png')
+        #     road_mask_pattern = os.path.join(data_root, 'road_mask_{}.png')
+        #     gt_graph_pattern = os.path.join(data_root, 'region_{}_refine_gt_graph.p')
+
+        #     train, val, test, test_out = globalscale_data_partition()
+            
+        #     # coord-transform = (r, c) -> (x, y)
+        #     # takes [N, 2] points
+        #     coord_transform = lambda v : v[:, ::-1]
+            
         elif self.config.DATASET == 'globalscale':
             self.IMAGE_SIZE = 2048
-            # TODO: SAMPLE_MARGIN here is for training, the one in config is for inference
             self.SAMPLE_MARGIN = 64
-            rgb_pattern = '../region_{}_sat.png'
-            keypoint_mask_pattern = '../keypoint_mask_{}.png'
-            road_mask_pattern = '../road_mask_{}.png'
-            gt_graph_pattern = '../region_{}_refine_gt_graph.p'
+            data_root = self.config.DATA_ROOT
 
-            train, val, test, test_out = globalscale_data_partition()
+            coord_transform = lambda v: v[:, ::-1]
 
-            # coord-transform = (r, c) -> (x, y)
-            # takes [N, 2] points
-            coord_transform = lambda v : v[:, ::-1]
+            split_folders = {
+                'train': 'train',
+                'val': 'val',
+                'test': 'in-domain-test',
+                'test_out': 'out_of_domain'
+            }
+
+            if split not in split_folders:
+                raise ValueError(f'Unknown Global-Scale split: {split}')
+
+            split_dir = os.path.join(data_root, split_folders[split])
+
+            tile_paths = []
+            for root, dirs, files in os.walk(split_dir):
+                dirs.sort()
+                for filename in sorted(files):
+                    if filename.startswith('region_') and filename.endswith('_sat.png'):
+                        tile_idx = int(filename[len('region_'):-len('_sat.png')])
+                        tile_paths.append((tile_idx, root))
+
+            tile_paths.sort(key=lambda x: x[0])
 
         elif self.config.DATASET == 'spacenet':
             self.IMAGE_SIZE = 400
@@ -294,68 +333,121 @@ class SatMapDataset(Dataset):
             # takes [N, 2] points
             coord_transform = lambda v : np.stack([v[:, 1], 400 - v[:, 0]], axis=1)
 
-        self.is_train = is_train
+        self.split = split
 
-        train_split = train + val
-        test_split = test
-        tile_indices = train_split if self.is_train else test_split
+        if self.config.DATASET == 'globalscale':
+            if dev_run:
+                tile_paths = tile_paths[:4]
 
-        self.tile_indices = tile_indices
+            self.tile_records = []
+            for tile_idx, tile_dir in tile_paths:
+                if tile_idx % 10 == 0:
+                    print(f'checking tile {tile_idx}', flush=True)
 
-        self.trainnum = train
-        # Stores all imgs in memory.
-        self.rgbs, self.keypoint_masks, self.road_masks  = [], [], []
-        # For graph label generation.
-        self.graph_label_generators = []
+                record = {
+                    'id': tile_idx,
+                    'rgb': os.path.join(tile_dir, f'region_{tile_idx}_sat.png'),
+                    'road': os.path.join(tile_dir, f'road_mask_{tile_idx}.png'),
+                    'keypoint': os.path.join(tile_dir, f'keypoint_mask_{tile_idx}.png'),
+                    'graph': os.path.join(tile_dir, f'region_{tile_idx}_refine_gt_graph.p'),
+                }
 
-        ##### FAST DEBUG
-        if dev_run:
-            tile_indices = tile_indices[:4]
-        ##### FAST DEBUG
-        for tile_idx in tile_indices:
-            print(f'loading tile {tile_idx}')
-            rgb_path = rgb_pattern.format(tile_idx)
-            road_mask_path = road_mask_pattern.format(tile_idx)
-            keypoint_mask_path = keypoint_mask_pattern.format(tile_idx)
-            # graph label gen
-            # gt graph: dict for adj list, for cityscale set keys are (r, c) nodes, values are list of (r, c) nodes
-            # I don't know what coord system spacenet uses but we convert them all to (x, y)
-            gt_graph_adj = pickle.load(open(gt_graph_pattern.format(tile_idx),'rb'))
-            if len(gt_graph_adj) == 0:
-                print(f'===== skipped empty tile {tile_idx} =====')
-                continue
-            self.rgbs.append(read_rgb_img(rgb_path))
-            self.road_masks.append(cv2.imread(road_mask_path, cv2.IMREAD_GRAYSCALE))
-            self.keypoint_masks.append(cv2.imread(keypoint_mask_path, cv2.IMREAD_GRAYSCALE))
-            graph_label_generator = GraphLabelGenerator(config, gt_graph_adj, coord_transform)
-            self.graph_label_generators.append(graph_label_generator)
+                with open(record['graph'], 'rb') as f:
+                    gt_graph_adj = pickle.load(f)
+
+                if len(gt_graph_adj) == 0:
+                    print(f'===== skipped empty tile {tile_idx} =====', flush=True)
+                    continue
+
+                self.tile_records.append(record)
+
+            self.image_cache = OrderedDict()
+            self.graph_cache = OrderedDict()
+
+            self.image_cache_size = 16
+            self.graph_cache_size = 16
+
+            self.trainnum = list(range(len(self.tile_records)))
+
+        else:
+            if self.split == 'train':
+                tile_indices = train
+            elif self.split == 'val':
+                tile_indices = val
+            else:
+                tile_indices = test
+
+            if dev_run:
+                tile_indices = tile_indices[:4]
+
+            self.trainnum = tile_indices
+
+            self.rgbs = []
+            self.keypoint_masks = []
+            self.road_masks = []
+            self.graph_label_generators = []
+
+            for tile_idx in tile_indices:
+                if tile_idx % 10 == 0:
+                    print(f'loading tile {tile_idx}', flush=True)
+                rgb_path = rgb_pattern.format(tile_idx)
+                road_mask_path = road_mask_pattern.format(tile_idx)
+                keypoint_mask_path = keypoint_mask_pattern.format(tile_idx)
+                graph_path = gt_graph_pattern.format(tile_idx)
+
+                with open(graph_path, 'rb') as f:
+                    gt_graph_adj = pickle.load(f)
+
+                if len(gt_graph_adj) == 0:
+                    print(f'===== skipped empty tile {tile_idx} =====', flush=True)
+                    continue
+
+                self.rgbs.append(read_rgb_img(rgb_path))
+                self.road_masks.append(cv2.imread(road_mask_path, cv2.IMREAD_GRAYSCALE))
+                self.keypoint_masks.append(cv2.imread(keypoint_mask_path, cv2.IMREAD_GRAYSCALE))
+
+                graph_label_generator = GraphLabelGenerator(self.config, gt_graph_adj, coord_transform)
+                self.graph_label_generators.append(graph_label_generator)
+
+            if self.split == 'train':
+                self.trainnum = self.rgbs
 
         self.sample_min = self.SAMPLE_MARGIN
         self.sample_max = self.IMAGE_SIZE - (self.config.PATCH_SIZE + self.SAMPLE_MARGIN)
 
-        if not self.is_train:
+        if self.split != 'train':
+            if self.config.DATASET == 'globalscale':
+                num_images = len(self.tile_records)
+            else:
+                num_images = len(self.rgbs)
+
             eval_patches_per_edge = math.ceil((self.IMAGE_SIZE - 2 * self.SAMPLE_MARGIN) / self.config.PATCH_SIZE)
             self.eval_patches = []
-            for i in range(len(tile_indices)):
-                self.eval_patches += get_patch_info_one_img(
-                    i, self.IMAGE_SIZE, self.SAMPLE_MARGIN, self.config.PATCH_SIZE, eval_patches_per_edge
-                )
+
+            for i in range(num_images):
+                self.eval_patches += get_patch_info_one_img(i, self.IMAGE_SIZE, self.SAMPLE_MARGIN, self.config.PATCH_SIZE, eval_patches_per_edge)
 
     def __len__(self):
-        if self.is_train:
+        if self.split == 'train':
             if self.config.DATASET == 'cityscale':
                 num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
                 return len(self.trainnum) * num_patches_per_image
             elif self.config.DATASET == 'spacenet':
                 num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
                 return len(self.trainnum) * num_patches_per_image
+            elif self.config.DATASET == 'globalscale':
+                num_patches_per_image = max(1, int(self.IMAGE_SIZE / self.config.PATCH_SIZE)) ** 2
+                return len(self.trainnum) * num_patches_per_image
         else:
             return len(self.eval_patches)
 
     def __getitem__(self, idx):
-
-        if self.is_train:
-            img_idx = np.random.randint(low=0, high=len(self.rgbs))
+        
+        if self.split == 'train':
+            if self.config.DATASET == 'globalscale':
+                img_idx = np.random.randint(low=0, high=len(self.tile_records))
+            else:
+                img_idx = np.random.randint(low=0, high=len(self.rgbs))
             begin_x = np.random.randint(low=self.sample_min, high=self.sample_max+1)
             begin_y = np.random.randint(low=self.sample_min, high=self.sample_max+1)
             end_x, end_y = begin_x + self.config.PATCH_SIZE, begin_y + self.config.PATCH_SIZE
@@ -363,12 +455,22 @@ class SatMapDataset(Dataset):
             # Returns eval patch
             img_idx, (begin_x, begin_y), (end_x, end_y) = self.eval_patches[idx]
         # Crop patch imgs and masks
-        rgb_patch = self.rgbs[img_idx][begin_y:end_y, begin_x:end_x, :]
-        keypoint_mask_patch = self.keypoint_masks[img_idx][begin_y:end_y, begin_x:end_x]
-        road_mask_patch = self.road_masks[img_idx][begin_y:end_y, begin_x:end_x]
+        if self.config.DATASET == 'globalscale':
+            rgb_img, keypoint_mask_img, road_mask_img = (self._get_tile_images(img_idx))
+            graph_label_generator = self._get_graph_generator(img_idx)
+
+        else:
+            rgb_img = self.rgbs[img_idx]
+            keypoint_mask_img = self.keypoint_masks[img_idx]
+            road_mask_img = self.road_masks[img_idx]
+            graph_label_generator = self.graph_label_generators[img_idx]
+
+        rgb_patch = rgb_img[begin_y:end_y, begin_x:end_x, :]
+        keypoint_mask_patch = keypoint_mask_img[begin_y:end_y, begin_x:end_x]
+        road_mask_patch = road_mask_img[begin_y:end_y, begin_x:end_x]
         # Augmentation
         rot_index = 0
-        if self.is_train:
+        if self.split == 'train':
             rot_index = np.random.randint(0, 4)
             # CCW
             rgb_patch = np.rot90(rgb_patch, rot_index, [0,1]).copy()
@@ -377,8 +479,8 @@ class SatMapDataset(Dataset):
         # Sample graph labels from patch
         patch = ((begin_x, begin_y), (end_x, end_y))
         # points are img (x, y) inside the patch.
-        graph_points, topo_samples = self.graph_label_generators[img_idx].sample_patch(patch, rot_index)
-        pairs, connected, valid = zip(*topo_samples)
+        graph_points, topo_samples = graph_label_generator.sample_patch(patch, rot_index)        
+        pairs, connected, valid = zip(*topo_samples)  
         # rgb: [H, W, 3] 0-255
         # masks: [H, W] 0-1
         return {
@@ -391,3 +493,42 @@ class SatMapDataset(Dataset):
             'connected': torch.tensor(connected, dtype=torch.bool),
             'valid': torch.tensor(valid, dtype=torch.bool),
         }
+
+    def _get_tile_images(self, img_idx):
+        if img_idx in self.image_cache:
+            self.image_cache.move_to_end(img_idx)
+            return self.image_cache[img_idx]
+
+        record = self.tile_records[img_idx]
+        rgb = read_rgb_img(record['rgb'])
+        road = cv2.imread(record['road'], cv2.IMREAD_GRAYSCALE)
+        keypoint = cv2.imread(record['keypoint'], cv2.IMREAD_GRAYSCALE)
+
+        if rgb is None or road is None or keypoint is None:
+            raise RuntimeError(f"Could not read all images for tile {record['id']}")
+
+        result = (rgb, keypoint, road)
+        self.image_cache[img_idx] = result
+
+        if len(self.image_cache) > self.image_cache_size:
+            self.image_cache.popitem(last=False)
+
+        return result
+
+
+    def _get_graph_generator(self, img_idx):
+        if img_idx in self.graph_cache:
+            self.graph_cache.move_to_end(img_idx)
+            return self.graph_cache[img_idx]
+
+        record = self.tile_records[img_idx]
+        with open(record['graph'], 'rb') as f:
+            gt_graph_adj = pickle.load(f)
+
+        generator = GraphLabelGenerator(self.config,gt_graph_adj, lambda v: v[:, ::-1])
+        self.graph_cache[img_idx] = generator
+
+        if len(self.graph_cache) > self.graph_cache_size:
+            self.graph_cache.popitem(last=False)
+
+        return generator
